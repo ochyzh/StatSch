@@ -1,0 +1,81 @@
+---
+title: "stat_sch"
+author: "Olga Chyzh"
+date: "April 17, 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(stringr)
+library(magrittr)
+
+```
+
+
+
+#Scrape an individual faculty name and rank
+
+```{r}
+myhtml <- read_html("https://www.stat.iastate.edu/people")
+facpaths<-html_nodes(myhtml, "a")[103:223] %>% html_attr("href")
+ind<-seq(from=1,to=120, by=3)
+facpaths[ind]
+
+facpaths<-sub('.*/', '', facpaths)
+ind1<-grep("@", facpaths)
+facpaths<-facpaths[-ind1]
+facpaths<-unique(facpaths)
+
+urlstump<-"https://www.stat.iastate.edu/people/"
+mypaths<-paste0(urlstump, facpaths)
+mypaths<-unique(mypaths)
+#Get the name:
+mypaths[1] %>% read_html() %>%
+      html_nodes("#page-title") %>% 
+      html_text() -> pname
+
+#Get the rank:
+mypaths[1] %>% read_html() %>%
+      html_nodes(".even") %>% 
+      html_text() -> title
+
+#Put them together:  
+cbind.data.frame(name=unlist(pname),title=unlist(title))
+
+```
+## Example 2: Get Names and Ranks of Faculty:
+
+- Step 3: write a wrapper function that will do this for any faculty once given a url
+```{r}
+get_info<-function(myurl) {
+  test <- try(myurl %>% read_html(), silent=T)
+  if ("try-error" %in% class(test)) {
+    return(NA)
+  } else
+    myurl %>% read_html() %>%
+      html_nodes("#page-title") %>% 
+      html_text() -> pname
+    myurl %>% read_html() %>%
+      html_nodes(".even") %>% 
+      html_text() -> title
+  
+    return(cbind.data.frame(name=unlist(pname),title=unlist(title)))
+}
+
+get_info(mypaths[1]) #Test the function
+
+mydata<-do.call(rbind, lapply(mypaths, get_info))
+mydata
+```
+
+
+
+
