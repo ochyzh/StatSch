@@ -26,18 +26,19 @@ library(magrittr)
 
 ```{r}
 myhtml <- read_html("https://www.stat.iastate.edu/people")
-facpaths<-html_nodes(myhtml, "a")[103:223] %>% html_attr("href")
-ind<-seq(from=1,to=120, by=3)
+facpaths<-html_nodes(myhtml, "a")[103:220] %>% html_attr("href")
+ind<-seq(from=1,to=117, by=3)
 facpaths[ind]
 
 facpaths<-sub('.*/', '', facpaths)
 ind1<-grep("@", facpaths)
 facpaths<-facpaths[-ind1]
 facpaths<-unique(facpaths)
+facpaths
 
 urlstump<-"https://www.stat.iastate.edu/people/"
 mypaths<-paste0(urlstump, facpaths)
-mypaths<-unique(mypaths)
+
 #Get the name:
 mypaths[1] %>% read_html() %>%
       html_nodes("#page-title") %>% 
@@ -49,7 +50,7 @@ mypaths[1] %>% read_html() %>%
       html_text() -> title
 
 #Put them together:  
-cbind.data.frame(name=unlist(pname),title=unlist(title))
+cbind.data.frame(name=unlist(pname),title=unlist(title)[1])
 
 ```
 ## Example 2: Get Names and Ranks of Faculty:
@@ -68,15 +69,286 @@ get_info<-function(myurl) {
       html_nodes(".even") %>% 
       html_text() -> title
   
-    return(cbind.data.frame(name=unlist(pname),title=unlist(title)))
+    return(cbind.data.frame(name=unlist(pname),title=unlist(title)[1]))
 }
 
 get_info(mypaths[1]) #Test the function
 
 mydata<-do.call(rbind, lapply(mypaths, get_info))
-mydata
+mydata<-mydata %>% mutate(last_name=word(name,-1),first_name=gsub("\\s*\\w*$", "", name)) %>% mutate(first_name=str_remove(first_name, "Dr.")) %>% mutate(first_name=trimws(first_name)) %>% mutate(first_name=word(first_name,1))
+
+mydata$last_name[mydata$last_name=="Brabanter"]<-"deBrabanter"
+Wong<-c("Raymond Wong","Assistant Professor","Wong","Raymond")
+Li<-c("Yehua Li","Associate Professor","Li","Yehua")
+Athreya<-c("Krishna Athreya", "Distringuished Professor","Athreya","Krishna")
+Koehler<-c("Ken Koehler", "University Professor","Koehler","Ken")
+
+mydata$name<-as.character(mydata$name)
+mydata$title<-as.character(mydata$title)
+mydata$title[mydata$title=="Associate professor"]<-"Associate Professor"
+mydata$title<-trimws(mydata$title)
+mydata<-rbind(mydata,Wong,Li,Koehler)
+mydata$woman<-0
+mydata$woman[mydata$first_name %in% c("Emily","Olga","Danica","Amy","Ulrike","Peng","Lily","Cindy","Alicia","Laura","Heike","Sarah","Karin","Petrutza","Zhulin","Susan","Anna")]<-1
+
+table(mydata$title)
+mydata$title_3cat<-NA
+mydata$title_3cat[mydata$title=="Lecturer" | mydata$title=="Senior Lecturer"]<-0
+mydata$title_3cat[mydata$title=="Assistant Professor"]<-1
+mydata$title_3cat[mydata$title=="Associate Professor"]<-2
+mydata$title_3cat[mydata$title %in% c("Professor","Distinguished Professor","Professor and Associate Chair","Professor and Chair","University Professor") ]<-3
+table(mydata$title_3cat)
+
+
+tibble(mydata)
+```
+
+#Merge with Teaching Schedules:
+```{r}
+sch_f15<-read_csv("schedf15.csv", skip=3, col_names = FALSE)
+sch_f15<-sch_f15 %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""), classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+
+
+teach_days<-sch_f15$teach_days
+num_days<-function(teach_days){
+  tdays<-unique(unlist(strsplit(teach_days, "")))
+  num_days<-length(tdays)
+    return(num_days)
+}
+
+#num_days(teach_days[2])
+
+sch_f15$num_days<-sapply(teach_days,num_days)
+
+sch_f15 <- sch_f15 %>% mutate(fall15days=teach_days, fall15=num_days, classesf15=classes) %>% select(last_name,first_name,  fall15days, fall15, classesf15)
+
+mydata1<-left_join(mydata,sch_f15, by=c("last_name","first_name") )
+
+#2016 spring:
+d<-read_csv("scheds16.csv", skip=3, col_names = FALSE)
+deBrabanter<-c("Computer Science","","","","MWF","","deBrabanter, Kris", "","")
+d<-rbind(d,deBrabanter)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>% mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(spring16days=teach_days,spring16=num_days,classess16=classes) %>% select(last_name,first_name,  spring16days,spring16,classess16)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+#2016 fall:
+d<-read_csv("schedf16.csv", skip=3, col_names = FALSE)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>% mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall16days=teach_days,fall16=num_days,classesf16=classes) %>% select(last_name,first_name,  fall16days,fall16,classesf16)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+#2017 spring:
+d<-read_csv("scheds17.csv", skip=3, col_names = FALSE)
+deBrabanter<-c("Computer Science","","","","MWF","","deBrabanter, Kris", "","")
+d<-rbind(d,deBrabanter)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(spring17days=teach_days,spring17=num_days,classess17=classes) %>% select(last_name,first_name,  spring17days,spring17,classess17)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+#2017 fall:
+d<-read_csv("schedf17.csv", skip=3, col_names = FALSE)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall17days=teach_days,fall17=num_days,classesf17=classes) %>% select(last_name,first_name,  fall17days,fall17,classesf17)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+
+#2018 spring:
+d<-read_csv("scheds18.csv", skip=3, col_names = FALSE)
+Sherman<-c("Aerospace","","","","MWF","","Sherman, Peter", "","")
+d<-rbind(d,Sherman)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(spring18days=teach_days,spring18=num_days,classess18=classes) %>% select(last_name,first_name,  spring18days,spring18,classess18)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+#2018 fall:
+d<-read_csv("schedf18.csv", skip=3, col_names = FALSE)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>% mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall18days=teach_days,fall18=num_days,classesf18=classes) %>% select(last_name,first_name,  fall18days,fall18,classesf18)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+
+#2019 spring:
+d<-read_csv("scheds19.csv", skip=3, col_names = FALSE)
+Sherman<-c("Aerospace","","","","MWF","","Sherman, Peter", "","")
+d<-rbind(d,Sherman)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>% mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(first_name, last_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(spring19days=teach_days,spring19=num_days,classess19=classes) %>% select(last_name,first_name,  spring19days,spring19,classess19)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+#2019 fall:
+d<-read_csv("schedf19_v1.csv", skip=3, col_names = FALSE)
+Sherman<-c("Aerospace","","","","MWF","","Sherman, Peter", "","")
+d<-rbind(d,Sherman)
+Chyzh<-c("Political Sci","","","","TR","","Chyzh, Olga", "","")
+d<-rbind(d,Chyzh)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(last_name, first_name) %>% summarise(teach_days = paste0(teach_days, collapse = ""),classes=length(X7)) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall19days=teach_days,fall19=num_days,classesf19=classes) %>% select(last_name,first_name,  fall19days,fall19,classesf19)
+
+mydata1<-left_join(mydata1,d, by=c("last_name","first_name") )
+
+
+```
+
+
+Reshape:
+```{r}
+
+mydata2<-mydata1 %>% select(name,title,title_3cat, last_name, first_name, woman, fall15,spring16,fall16,spring17,fall17,spring18,fall18,spring19,fall19) %>% gather("term", "sch", c(fall15,spring16,fall16,spring17,fall17,spring18,fall18,spring19,fall19)) 
+
+mydata4<-mydata1 %>% select(name, fall15=fall15days,spring16=spring16days,fall16=fall16days,spring17=spring17days,fall17=fall17days,spring18=spring18days,fall18=fall18days,spring19=spring19days,fall19=fall19days) %>% gather("term", "days", c(fall15,spring16,fall16,spring17,fall17,spring18,fall18,spring19,fall19)) 
+
+mydata5<-mydata1 %>% select(name, fall15=classesf15,spring16=classess16,fall16=classesf16,spring17=classess17,fall17=classesf17,spring18=classess18,fall18=classesf18,spring19=classess19,fall19=classesf19) %>% gather("term", "classes", c(fall15,spring16,fall16,spring17,fall17,spring18,fall18,spring19,fall19)) 
+
+mydata2<-left_join(mydata2, mydata4, by=c("name","term"))
+mydata2<-left_join(mydata2, mydata5, by=c("name","term"))
+
+#Correct rank for assistants that got tenure:
+mydata2$rank[mydata2$name=="Ulrike Genschel" & mydata2$term %in% c("fall2015","spring2016")]<-"Assistant Professor"
+mydata2$rank[mydata2$name=="Jarad Niemi" & mydata2$term %in% c("fall2015","spring2016","fall2016","spring2017")]<-"Assistant Professor"
+
+#Correct joint appointees:
+mydata2$joint<-0
+mydata2$joint[mydata2$last_name=="deBrabanter"]<-1 #Computer Science
+mydata2$joint[mydata2$last_name=="Athreya"]<-1 #Math
+mydata2$joint[mydata2$name=="Chong Wang"]<-1 #Food Supply Veterinary Medicine
+mydata2$joint[mydata2$last_name=="Vardeman"]<-1 #IMSE
+mydata2$joint[mydata2$last_name=="Sherman"]<-1 #Aerospace
+mydata2$joint[mydata2$last_name=="Chyzh"]<-1 #Political Science
+
+mydata2<-mydata2[!is.na(mydata2$sch),]
+mydata2$sch[mydata2$first_name=="Huaiqing" & mydata2$term=="fall15"]<-2
+
+
+```
+
+Analyze:
+```{r}
+mydata2$junior<-as.numeric(mydata2$title=="Assistant Professor")
+mydata2$associate<-as.numeric(mydata2$title=="Associate Professor")
+mydata2$full<-as.numeric(mydata2$title_3cat==3)
+mydata2$admin<-as.numeric(mydata2$last_name %in% c("Caragea","Carriquiry","Morris","Shelley"))
+
+mydata2$lecturer<-as.numeric(mydata2$title=="Lecturer" | mydata2$title=="Senior Lecturer")
+mydata2$junwoman<-as.numeric(mydata2$woman & (mydata2$junior | mydata2$associate))
+
+
+mydata2 %>% group_by(title) %>% summarise(Teach_days=mean(sch, na.rm = TRUE))
+
+table1<-mydata2 %>% filter(sch>3)%>% group_by(name) %>% summarise(rank=first(title), times=length(sch>3)) %>% ungroup %>% group_by(times) 
+
+
+cbind(mydata2$name[mydata2$sch>3 & mydata2$junior==1],mydata2$title[mydata2$sch>3 & mydata2$junior==1])
+unique(cbind(mydata2$name[mydata2$sch>3 & mydata2$junior==0 & mydata2$lecturer==0],mydata2$title[mydata2$sch>3 & mydata2$junior==0 & mydata2$lecturer==0]))
+cbind(mydata2$name[mydata2$sch>3 & mydata2$junior==0 & mydata2$lecturer==0],mydata2$title[mydata2$sch>3 & mydata2$junior==0 & mydata2$lecturer==0])
+unique(cbind(mydata2$name[mydata2$sch>3 & mydata2$associate==1 ],mydata2$title[mydata2$sch>3 & mydata2$associate==1]))
+unique(cbind(mydata2$name[mydata2$sch>3 & mydata2$associate==0 & mydata2$junior==0 & mydata2$lecturer==0 ],mydata2$title[mydata2$sch>3 & mydata2$associate==0 & mydata2$junior==0 & mydata2$lecturer==0]))
+
+summary(lm(data=mydata2, sch~junior+associate+lecturer+woman +admin ))
+mydata2$sch_bin<-as.numeric(mydata2$sch>3)
+
+summary(glm(data=mydata2, sch_bin~junior+associate+lecturer+woman +admin, family=binomial(link="logit") ))
+
+
 ```
 
 
 
+
+Compare the original and the revised schedule for the fall:
+```{r}
+
+#2019 fall:
+d<-read_csv("schedf19.csv", skip=3, col_names = FALSE)
+Sherman<-c("Aerospace","","","","MWF","","Sherman, Peter", "","")
+d<-rbind(d,Sherman)
+Chyzh<-c("Political Sci","","","","TR","","Chyzh, Olga", "","")
+d<-rbind(d,Chyzh)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(last_name, first_name) %>% summarise(teach_days = paste0(teach_days, collapse = "")) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall19days=teach_days,fall19=num_days) %>% select(last_name,first_name,  fall19days,fall19)
+
+mydata3<-left_join(mydata,d, by=c("last_name","first_name") )
+mydata3$diff<-as.numeric(mydata3$fall19!=mydata3$fall19_v1)
+
+d<-read_csv("schedf19_v1.csv", skip=3, col_names = FALSE)
+Sherman<-c("Aerospace","","","","MWF","","Sherman, Peter", "","")
+d<-rbind(d,Sherman)
+Chyzh<-c("Political Sci","","","","TR","","Chyzh, Olga", "","")
+d<-rbind(d,Chyzh)
+d <-d %>% mutate(X7=str_extract(X7,"[^(]+")) %>%  mutate(last_name=trimws(str_extract(X7,"[^,]+")), first_name=trimws(str_extract(X7,'\\b[^,]+$')), teach_days=word(X5,1)) %>% filter(teach_days!="NA" & teach_days!="WWW" &teach_days!="TBD") %>%
+     group_by(last_name, first_name) %>% summarise(teach_days = paste0(teach_days, collapse = "")) %>% ungroup %>% filter(!is.na(first_name))
+d
+
+teach_days<-d$teach_days
+d$num_days<-sapply(teach_days,num_days)
+
+d <- d %>%  mutate(fall19days_v1=teach_days,fall19_v1=num_days) %>% select(last_name,first_name,  fall19days_v1,fall19_v1)
+
+mydata3<-left_join(mydata3,d, by=c("last_name","first_name") )
+
+
+```
 
